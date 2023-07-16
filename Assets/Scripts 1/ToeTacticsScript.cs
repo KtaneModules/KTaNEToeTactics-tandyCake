@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using KModkit;
+using Rnd = UnityEngine.Random;
 
 public class ToeTacticsScript : MonoBehaviour {
 
@@ -79,11 +80,22 @@ public class ToeTacticsScript : MonoBehaviour {
     }
     void GeneratePuzzle()
     {
-        tiles[2].SetTile(TileValue.O, ShapeColor.Red);
-        tiles[3].SetTile(TileValue.X, ShapeColor.Blue);
-        tiles[4].SetTile(TileValue.O, ShapeColor.Yellow);
-        tiles[8].SetTile(TileValue.X, ShapeColor.Red);
-        board = new Board(new TileValue[9], new SolveState[0]);
+        do
+        {
+            int[] prefilled = Enumerable.Range(0, 9).ToArray().Shuffle().Take(4).ToArray();
+            TileValue[] pieces = new[] { TileValue.X, TileValue.X, TileValue.O, TileValue.O };
+            TileValue[] boardState = Enumerable.Repeat(TileValue.None, 9).ToArray();
+            usedSolveStates.Clear();
+            for (int i = 0; i < 4; i++)
+            {
+                int pos = prefilled[i];
+                tiles[pos].SetTile(pieces[i], (ShapeColor)Rnd.Range(1, 4));
+                boardState[pos] = pieces[i];
+                usedSolveStates.Add(IndexTable(tiles[pos]));
+                board = new Board(boardState, usedSolveStates.ToArray());
+            }
+        } while (!board.IsWinnableBy(playerPiece));
+        Debug.Log(board.IsWinnableBy(playerPiece));
     }
     void PlaceTile(int position, TileValue piece)
     {
