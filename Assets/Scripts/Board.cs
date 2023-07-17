@@ -33,6 +33,15 @@ public class Board {
             newValues[move.playedPosition] = move.playedPiece;
             children.Add(new TreeNode(new Board(newValues, board._solveStates), this, move));
         }
+        public List<TreeNode> GetAllEnds()
+        {
+            List<TreeNode> ends = new List<TreeNode>();
+            if (children != null)
+                foreach (TreeNode child in children)
+                    ends.AddRange(child.GetAllEnds());
+            else ends.Add(this);
+            return ends;
+        }
     }
     class Move
     {
@@ -93,19 +102,41 @@ public class Board {
     {
         return GetVictor() == player;
     }
+    public void GenerateTree(TileValue player)
+    {
+        _root = new TreeNode(this, null, new Move(NextPiece(player), -1));
+    }
     public bool IsWinnableBy(TileValue player)
     {
-        TileValue opponent = NextPiece(player);
-        TileValue currentPlayer = player;
+        // No one-move games allowed.
+        if (_root.children.Any(x => x.board.IsWin(player)))
+            return false;
 
-        _root = new TreeNode(this, null, new Move(NextPiece(player), -1));
-
-        return true;
+        TreeNode currentNode = _root;
+        
+        do currentNode = GetBestMove(currentNode);
+        while (currentNode.victor == TileValue.None); 
+        
+        return currentNode.victor == player;
     }
     private IEnumerable<Move> GetAvailableMoves(TileValue whoseTurn)
     {
         for (int i = 0; i < 9; i++)
             if (_values[i] == TileValue.None)
                 yield return new Move(whoseTurn, i);
+    }
+    public int GetBestMove()
+    {
+       return GetBestMove(_root).howDidWeGetHere.playedPosition;
+    }
+    private TreeNode GetBestMove(TreeNode node)
+    {
+        TileValue optimizingPlayer = NextPiece(node.howDidWeGetHere.playedPiece);
+        var kavin = node.children.Select(c => c.GetAllEnds()).ToArray();
+        Debug.Log(":3");
+        return node.children.OrderByDescending(child =>
+                   child.GetAllEnds().Count(e => e.victor == optimizingPlayer)).ThenByDescending(child =>
+                   child.GetAllEnds().Count())
+                   .First();
     }
 }

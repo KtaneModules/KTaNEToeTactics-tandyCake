@@ -67,6 +67,8 @@ public class ToeTacticsScript : MonoBehaviour {
         {
             Log("You placed an {0} in the {1} position.", playerPiece, tileNames[tile.position]);
             PlaceTile(tile.position, playerPiece);
+            if (!moduleSolved)
+                StartCoroutine(PlaceOpponentPiece());
         }
     }
     void GenRuleseed()
@@ -86,6 +88,8 @@ public class ToeTacticsScript : MonoBehaviour {
             TileValue[] pieces = new[] { TileValue.X, TileValue.X, TileValue.O, TileValue.O };
             TileValue[] boardState = Enumerable.Repeat(TileValue.None, 9).ToArray();
             usedSolveStates.Clear();
+            for (int i = 0; i < 9; i++)
+                tiles[i].Shape = TileValue.None;
             for (int i = 0; i < 4; i++)
             {
                 int pos = prefilled[i];
@@ -94,8 +98,8 @@ public class ToeTacticsScript : MonoBehaviour {
                 usedSolveStates.Add(IndexTable(tiles[pos]));
                 board = new Board(boardState, usedSolveStates.ToArray());
             }
+            board.GenerateTree(playerPiece);
         } while (!board.IsWinnableBy(playerPiece));
-        Debug.Log(board.IsWinnableBy(playerPiece));
     }
     void PlaceTile(int position, TileValue piece)
     {
@@ -111,6 +115,16 @@ public class ToeTacticsScript : MonoBehaviour {
         if (victor == playerPiece)
             Solve();
         else Strike();
+    }
+    IEnumerator PlaceOpponentPiece()
+    {
+        yield return new WaitForSeconds(0.75f);
+        TileValue opponentPiece = Board.NextPiece(playerPiece);
+        board.GenerateTree(opponentPiece);
+        int position = board.GetBestMove();
+
+        PlaceTile(position, opponentPiece);
+        Log("Your opponent placed an {0} in the {1} position.", opponentPiece, tileNames[position]);
     }
     void Solve()
     {
