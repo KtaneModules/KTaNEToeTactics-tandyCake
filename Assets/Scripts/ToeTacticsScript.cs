@@ -24,6 +24,7 @@ public class ToeTacticsScript : MonoBehaviour {
     private bool moduleSolved;
 
     private bool moduleInteractable = false;
+    private bool cbOn;
 
     private Board startingBoard;
     private Board board;
@@ -49,6 +50,8 @@ public class ToeTacticsScript : MonoBehaviour {
     }
     void Start()
     {
+        if (Colorblind.ColorblindModeActive)
+            ToggleCB();
         playerPiece = Bomb.GetSerialNumberNumbers().Last() % 2 == 0 ? TileValue.O : TileValue.X;
         Log("You are playing as {0}.", playerPiece);
     }
@@ -57,13 +60,19 @@ public class ToeTacticsScript : MonoBehaviour {
         GeneratePuzzle();
         moduleInteractable = true;
     }
+    void ToggleCB()
+    {
+        cbOn = !cbOn;
+        for (int i = 0; i < 9; i++)
+            tiles[i].SetColorblind(cbOn);
+    }
     void TilePress(Tile tile)
     {
         if (!tile.IsInteractable)
             return;
         tile.selectable.AddInteractionPunch(.25f);
         Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.ButtonPress, tile.transform);
-        if (moduleInteractable)
+        if (moduleInteractable && !moduleSolved)
         {
             Log("You placed an {0} in the {1} position.", playerPiece, tileNames[tile.position]);
             PlaceTile(tile.position, playerPiece);
@@ -89,7 +98,7 @@ public class ToeTacticsScript : MonoBehaviour {
             TileValue[] boardState = Enumerable.Repeat(TileValue.None, 9).ToArray();
             usedSolveStates.Clear();
             for (int i = 0; i < 9; i++)
-                tiles[i].Shape = TileValue.None;
+                tiles[i].SetTile(TileValue.None, ShapeColor.Gray);
             for (int i = 0; i < 4; i++)
             {
                 int pos = prefilled[i];
@@ -100,9 +109,29 @@ public class ToeTacticsScript : MonoBehaviour {
             }
             board.GenerateTree(playerPiece);
         } while (!board.IsWinnableBy(playerPiece));
+
+        startingBoard = board.Clone() as Board;
+        shapeColors = new ShapeColor[9];
+        for (int i = 0; i < 9; i++)
+            shapeColors[i] = tiles[i].Color;
+        LogStart();
+    }
+    void LogStart()
+    {
+        string colors = "";
+        string shapes = "";
+        for (int i = 8; i >= 0; i--)
+        {
+            colors += tiles[i].Color == ShapeColor.Gray ? '.' : tiles[i].Color.ToString()[0];
+            shapes += tiles[i].Shape == TileValue.None ? '.' : tiles[i].Shape.ToString()[0];
+        }
+        Log("colors: {0}", colors);
+        Log("shapes: {0}", shapes);
+        SuggestBestMove();
     }
     void PlaceTile(int position, TileValue piece)
     {
+        Audio.PlaySoundAtTransform("place piece", tiles[position].transform);
         tiles[position].SetTile(piece, ShapeColor.Gray);
         board[position] = piece;
         CheckCurrentBoard();
@@ -110,38 +139,69 @@ public class ToeTacticsScript : MonoBehaviour {
     void CheckCurrentBoard()
     {
         TileValue victor = board.GetVictor();
-        if (victor == TileValue.None)
-            return;
         if (victor == playerPiece)
             Solve();
-        else Strike();
+        else if (victor == Board.NextPiece(playerPiece))
+            StrikeWithOppWin();
+        else if (board.IsFull())
+            StrikeWithTie();
     }
     IEnumerator PlaceOpponentPiece()
     {
-        yield return new WaitForSeconds(0.75f);
+        moduleInteractable = false;
+        yield return new WaitForSeconds(1.25f);
         TileValue opponentPiece = Board.NextPiece(playerPiece);
         board.GenerateTree(opponentPiece);
         int position = board.GetBestMove();
-
+        if (position == -1)
+        {
+            yield break;
+        }
         PlaceTile(position, opponentPiece);
         Log("Your opponent placed an {0} in the {1} position.", opponentPiece, tileNames[position]);
+        CheckCurrentBoard();
+        SuggestBestMove();
+        moduleInteractable = true;
+    }
+    void SuggestBestMove()
+    {
+        board.GenerateTree(playerPiece);
+        int bestMove = board.GetBestMove();
+        if (bestMove == -1)
+            return;
+        Log("You should place an {0} in the {1} position.", playerPiece, tileNames[bestMove]);
     }
     void Solve()
     {
         moduleSolved = true;
         Log("You put three {0}s in a solving pattern. You win!", playerPiece);
         Module.HandlePass();
+        Audio.PlaySoundAtTransform("solve", transform);
     }
-    void Strike()
+    void StrikeWithOppWin()
     {
         Log("Your opponent put three {0}s in a solving pattern. Strike!", playerPiece == TileValue.X ? 'O' : 'X');
-        Module.HandleStrike();
-        Reset();
+        StartCoroutine(StrikeAndReset());
     }
-    void Reset()
+    void StrikeWithTie()
     {
+        Log("You've filled the board with no winner. Strike!");
+        StartCoroutine(StrikeAndReset());
+    }
+    IEnumerator StrikeAndReset()
+    {
+        moduleInteractable = false;
+        yield return new WaitForSeconds(1.5f);
+        Module.HandleStrike();
         for (int i = 0; i < 9; i++)
             tiles[i].SetTile(startingBoard[i], shapeColors[i]);
+        board = startingBoard.Clone() as Board;
+
+
+        board.GenerateTree(playerPiece);
+        moduleInteractable = true;
+        yield return null;
+        SuggestBestMove();
     }
     SolveState IndexTable(Tile tile)
     {
@@ -154,18 +214,37 @@ public class ToeTacticsScript : MonoBehaviour {
     }
 
     #pragma warning disable 414
-    private readonly string TwitchHelpMessage = @"Use <!{0} foobar> to do something.";
+    private readonly string TwitchHelpMessage = @"Use <!{0} ML> or <!{0} A2> to place your piece in the middle-left position. Use <!{0} colorblind> to toggle colorblind mode.";
     #pragma warning restore 414
 
     IEnumerator ProcessTwitchCommand (string command)
     {
+        string[] buttonNames = new[] { "BR", "BM", "BL", "MR", "MM", "ML", "TR", "TM", "TL", "C3", "B3", "A3", "C2", "B2", "A2", "C1", "B1", "A1" };
         command = command.Trim().ToUpperInvariant();
-        List<string> parameters = command.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
-        yield return null;
+        if (Regex.IsMatch(command, "[TMB][LMR]|[ABC][123]"))
+        {
+            yield return null;
+            yield return new WaitUntil(() => moduleInteractable);
+            int btnIx = Array.IndexOf(buttonNames, command) % 9;
+            tiles[btnIx].selectable.OnInteract();
+        }
+        else if (command.EqualsAny(new[] { "COLORBLIND", "COLOURBLIND", "COLOR-BLIND", "COLOUR-BLIND", "CB" }))
+        {
+            yield return null;
+            ToggleCB();
+        }
     }
 
     IEnumerator TwitchHandleForcedSolve ()
     {
-        yield return null;
+        while (!moduleSolved)
+        {
+            while (!moduleInteractable)
+                yield return true;
+            board.GenerateTree(playerPiece);
+            int btnIx = board.GetBestMove();
+            tiles[btnIx].selectable.OnInteract();
+            yield return null;
+        }
     }
 }

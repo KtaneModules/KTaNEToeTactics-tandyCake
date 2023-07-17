@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-public class Board {
+public class Board : ICloneable {
 
     class TreeNode
     {
@@ -98,6 +98,10 @@ public class Board {
             return TileValue.O;
         return TileValue.None;
     }
+    public bool IsFull()
+    {
+        return !_values.Any(x => x == TileValue.None);
+    }
     public bool IsWin(TileValue player)
     {
         return GetVictor() == player;
@@ -113,11 +117,11 @@ public class Board {
             return false;
 
         TreeNode currentNode = _root;
+
+        while (GetBestMove(currentNode) != null)
+            currentNode = GetBestMove(currentNode);
         
-        do currentNode = GetBestMove(currentNode);
-        while (currentNode.victor == TileValue.None); 
-        
-        return currentNode.victor == player;
+        return currentNode != null && currentNode.victor == player;
     }
     private IEnumerable<Move> GetAvailableMoves(TileValue whoseTurn)
     {
@@ -127,16 +131,51 @@ public class Board {
     }
     public int GetBestMove()
     {
+        if (GetBestMove(_root) == null)
+            return -1;
        return GetBestMove(_root).howDidWeGetHere.playedPosition;
     }
     private TreeNode GetBestMove(TreeNode node)
     {
+        if (node.children == null || node.children.Count == 0)
+            return null;
         TileValue optimizingPlayer = NextPiece(node.howDidWeGetHere.playedPiece);
-        var kavin = node.children.Select(c => c.GetAllEnds()).ToArray();
-        Debug.Log(":3");
-        return node.children.OrderByDescending(child =>
-                   child.GetAllEnds().Count(e => e.victor == optimizingPlayer)).ThenByDescending(child =>
-                   child.GetAllEnds().Count())
-                   .First();
+        //Debug.Log("Optimizing for " + optimizingPlayer);
+        foreach (TreeNode child in node.children)
+        {
+            if (child.victor == optimizingPlayer) {
+                //Debug.LogFormat("Placing in {0} to win!!!", child.howDidWeGetHere.playedPosition);
+                return child;
+            }
+        }
+        foreach (TreeNode child in node.children)
+        {
+            if (child.victor == NextPiece(optimizingPlayer))
+            {
+                //Debug.LogFormat("Placing in {0} to block the opponent.", child.howDidWeGetHere.playedPosition);
+                return child;
+            }
+        }
+        Dictionary<TreeNode, int> scores = new Dictionary<TreeNode, int>();
+        foreach (TreeNode child in node.children)
+        {
+            scores.Add(child, 0);
+            if (child.children == null)
+                continue;
+            foreach (TreeNode subChild in child.children)
+            {
+                TileValue nextVictor = subChild.victor;
+                if (nextVictor == optimizingPlayer)
+                    scores[child]++;
+                else if (nextVictor == NextPiece(optimizingPlayer))
+                    scores[child]--;
+            }
+        }
+        return scores.MaxBy(x => x.Value).Key;
+    }
+
+    public object Clone()
+    {
+        return new Board(_values.Clone() as TileValue[], _solveStates);
     }
 }
