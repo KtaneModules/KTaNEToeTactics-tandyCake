@@ -34,6 +34,8 @@ public class ToeTacticsScript : MonoBehaviour {
     SolveState[] allSolveStates = new int[] { 7, 11, 13, 14, 19, 21, 22, 25, 26, 28, 35, 37, 38, 41, 42, 44, 49, 50, 52, 56, 67, 69, 70, 73, 74, 76, 81, 82, 84, 88, 97, 98, 100, 104, 112, 131, 133, 134, 137, 138, 140, 145, 146, 148, 152, 161, 162, 164, 168, 176, 193, 194, 196, 200, 208, 224 }
                    .Select(ix => DecompressState(ix)).ToArray();
     private TileValue playerPiece;
+    private bool canStrike = true;
+
     private static SolveState DecompressState(int ix) {
         List<int> indices = new List<int>(3);
         for (int i = 0; i < 9; i++)
@@ -76,7 +78,7 @@ public class ToeTacticsScript : MonoBehaviour {
         {
             Log("You placed an {0} in the {1} position.", playerPiece, tileNames[tile.position]);
             PlaceTile(tile.position, playerPiece);
-            if (!moduleSolved)
+            if (!moduleSolved && !board.IsFull())
                 StartCoroutine(PlaceOpponentPiece());
         }
     }
@@ -139,12 +141,14 @@ public class ToeTacticsScript : MonoBehaviour {
     void CheckCurrentBoard()
     {
         TileValue victor = board.GetVictor();
+        moduleInteractable = false;
         if (victor == playerPiece)
             Solve();
         else if (victor == Board.NextPiece(playerPiece))
             StrikeWithOppWin();
         else if (board.IsFull())
             StrikeWithTie();
+        else moduleInteractable = true;
     }
     IEnumerator PlaceOpponentPiece()
     {
@@ -192,7 +196,8 @@ public class ToeTacticsScript : MonoBehaviour {
     {
         moduleInteractable = false;
         yield return new WaitForSeconds(1.5f);
-        Module.HandleStrike();
+        if (canStrike)
+            Module.HandleStrike();
         for (int i = 0; i < 9; i++)
             tiles[i].SetTile(startingBoard[i], shapeColors[i]);
         board = startingBoard.Clone() as Board;
@@ -202,6 +207,9 @@ public class ToeTacticsScript : MonoBehaviour {
         moduleInteractable = true;
         yield return null;
         SuggestBestMove();
+        canStrike = false;
+        yield return new WaitForSeconds(.5f);
+        canStrike = true;
     }
     SolveState IndexTable(Tile tile)
     {
