@@ -16,6 +16,6 @@ MonoBehaviour:
   author: tandyCake
   description: "Your years of getting ties won\u2019t save you now\u2026\n\nModule
     by tandyCake\nmoduleID: toeTactics\nManual can be found on ktane.timwi.de"
-  version: 1.0.1
+  version: 1.0.2
   outputFolder: build
   previewImage: {fileID: 2800000, guid: 8b38b90f82d6c314a95fcc4a687805e6, type: 3}

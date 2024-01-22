@@ -163,7 +163,6 @@ public class ToeTacticsScript : MonoBehaviour {
         }
         PlaceTile(position, opponentPiece);
         Log("Your opponent placed an {0} in the {1} position.", opponentPiece, tileNames[position]);
-        CheckCurrentBoard();
         SuggestBestMove();
         moduleInteractable = true;
     }
