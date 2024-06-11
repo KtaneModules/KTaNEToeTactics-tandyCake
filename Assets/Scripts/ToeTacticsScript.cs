@@ -228,7 +228,7 @@ public class ToeTacticsScript : MonoBehaviour {
     {
         string[] buttonNames = new[] { "BR", "BM", "BL", "MR", "MM", "ML", "TR", "TM", "TL", "C3", "B3", "A3", "C2", "B2", "A2", "C1", "B1", "A1" };
         command = command.Trim().ToUpperInvariant();
-        if (Regex.IsMatch(command, "[TMB][LMR]|[ABC][123]"))
+        if (Regex.IsMatch(command, "^([TMB][LMR]|[ABC][123])$"))
         {
             yield return null;
             yield return new WaitUntil(() => moduleInteractable);
