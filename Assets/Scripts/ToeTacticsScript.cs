@@ -14,60 +14,65 @@ public class ToeTacticsScript : MonoBehaviour {
     public KMBombModule Module;
     public KMColorblindMode Colorblind;
     public KMRuleSeedable Ruleseed;
-    //Ordered from the bottom right. (reverse reading order)
-    public Tile[] tiles;
-
+    public Tile[] tiles; //Ordered from the bottom right. (reverse reading order)
     private static string[] tileNames = new[] { "bottom-right", "bottom-middle", "bottom-left", "middle-right", "center", "middle-left", "top-right", "top-middle", "top-left" };
 
     static int moduleIdCounter = 1;
     int moduleId;
     private bool moduleSolved;
 
-    private bool moduleInteractable = false;
-    private bool cbOn;
+    private bool moduleInteractable = false; 
+    private bool cbOn; // Stores if colorblind mode is enabled.
 
-    private Board startingBoard;
-    private Board board;
-    private ShapeColor[] shapeColors;
-    private SolveState[,] solveStateTable = new SolveState[9, 6];
-    private List<SolveState> usedSolveStates = new List<SolveState>();
+    private TileValue[] boardSpaces; // Stores initial piece placements on the board.
+    private ShapeColor[] shapeColors; // Stores colors of the initial placements on the board.
+    private SolveState[,] solveStateTable = new SolveState[9, 6]; // Table stored in manual (varies by ruleseed)
+    private SolveState[] usedSolveStates;
+    // These numbers are the nummbers from 0 to 2^9 which contain exactly three '1's in their binary representation.
     SolveState[] allSolveStates = new int[] { 7, 11, 13, 14, 19, 21, 22, 25, 26, 28, 35, 37, 38, 41, 42, 44, 49, 50, 52, 56, 67, 69, 70, 73, 74, 76, 81, 82, 84, 88, 97, 98, 100, 104, 112, 131, 133, 134, 137, 138, 140, 145, 146, 148, 152, 161, 162, 164, 168, 176, 193, 194, 196, 200, 208, 224 }
-                   .Select(ix => DecompressState(ix)).ToArray();
-    private TileValue playerPiece;
-    private bool canStrike = true;
+                   .Select(id => new SolveState(id)).ToArray();
+    
+    private TileValue playerPiece; // Stores what piece the defuser is playing as.
+    private TileValue oppPiece; // Stores what piece the bomb is playing as.
 
-    private static SolveState DecompressState(int ix) {
-        List<int> indices = new List<int>(3);
-        for (int i = 0; i < 9; i++)
-            if ((ix & (1 << i)) != 0)
-                indices.Add(i);
-        return new SolveState(indices.ToArray());
-    }
-    void Awake () {
+    private Board startBoard; // Stores the initial positions of pieces on the board.
+    private DecisionTreeNode startState; // Stores the root of the decision tree representing the board state, rooted at the initial piece positions.
+    private DecisionTreeNode currentState; // Stores the node of startState represented by the current state of the module.
+
+    private bool unwinnable; // Stores whether the current board state is in an unwinnable position.
+
+    void Awake () { // Before bomb initialization.
         moduleId = moduleIdCounter++;
         GenRuleseed();
         foreach (Tile tile in tiles)
             tile.selectable.OnInteract += () => { TilePress(tile); return false; };
         Module.OnActivate += () => Activate();
     }
-    void Start()
-    {
+    void Start() { // Immediately after bomb initialization
         if (Colorblind.ColorblindModeActive)
             ToggleCB();
-        playerPiece = Bomb.GetSerialNumberNumbers().Last() % 2 == 0 ? TileValue.O : TileValue.X;
+        if (Bomb.GetSerialNumberNumbers().Last() % 2 == 0)
+        {
+            playerPiece = TileValue.O;
+            oppPiece = TileValue.X;
+        }
+        else
+        {
+            playerPiece = TileValue.X;
+            oppPiece = TileValue.O;
+        }
         Log("You are playing as {0}.", playerPiece);
     }
-    void Activate ()
-    {
+    void Activate () { // When lights turn on.
         GeneratePuzzle();
         moduleInteractable = true;
     }
-    void ToggleCB()
-    {
+    void ToggleCB() { // Toggles colorblind support.
         cbOn = !cbOn;
         for (int i = 0; i < 9; i++)
             tiles[i].SetColorblind(cbOn);
     }
+    // Handles tile interaction.
     void TilePress(Tile tile)
     {
         if (!tile.IsInteractable)
@@ -78,10 +83,11 @@ public class ToeTacticsScript : MonoBehaviour {
         {
             Log("You placed an {0} in the {1} position.", playerPiece, tileNames[tile.position]);
             PlaceTile(tile.position, playerPiece);
-            if (!moduleSolved && !board.IsFull())
+            if (!moduleSolved && !FullBoard())
                 StartCoroutine(PlaceOpponentPiece());
         }
     }
+    // Shuffles the potential solve states and takes the first 6*9=54 of them.
     void GenRuleseed()
     {
         var rng = Ruleseed.GetRNG();
@@ -93,31 +99,47 @@ public class ToeTacticsScript : MonoBehaviour {
     }
     void GeneratePuzzle()
     {
+        TileValue[] pieceOrder = new[] { oppPiece, playerPiece, oppPiece, playerPiece };
+        int[] positions;
+        ShapeColor[] colors;
+        SolveState[] states;
+        bool unwinnableByPlayer;
+        bool unwinnableByOpponent;
+        bool canSolveInOneMove;
         do
         {
-            int[] prefilled = Enumerable.Range(0, 9).ToArray().Shuffle().Take(4).ToArray();
-            TileValue[] pieces = new[] { TileValue.X, TileValue.X, TileValue.O, TileValue.O };
-            TileValue[] boardState = Enumerable.Repeat(TileValue.None, 9).ToArray();
-            usedSolveStates.Clear();
-            for (int i = 0; i < 9; i++)
-                tiles[i].SetTile(TileValue.None, ShapeColor.Gray);
+            positions = new int[4];
+            colors = new ShapeColor[4];
+            states = new SolveState[4];
+            boardSpaces = Enumerable.Repeat(TileValue.None, 9).ToArray();
+            shapeColors = Enumerable.Repeat(ShapeColor.Gray, 9).ToArray();
+
+            int[] positionOrder = Enumerable.Range(0, 9).ToArray().Shuffle();
             for (int i = 0; i < 4; i++)
             {
-                int pos = prefilled[i];
-                tiles[pos].SetTile(pieces[i], (ShapeColor)Rnd.Range(1, 4));
-                boardState[pos] = pieces[i];
-                usedSolveStates.Add(IndexTable(tiles[pos]));
-                board = new Board(boardState, usedSolveStates.ToArray());
-            }
-            board.GenerateTree(playerPiece);
-        } while (!board.IsWinnableBy(playerPiece));
+                positions[i] = positionOrder[i];
+                colors[i] = (ShapeColor)Rnd.Range(1, 4);
+                states[i] = IndexTable(positions[i], pieceOrder[i], colors[i]);
 
-        startingBoard = board.Clone() as Board;
-        shapeColors = new ShapeColor[9];
-        for (int i = 0; i < 9; i++)
-            shapeColors[i] = tiles[i].Color;
+                boardSpaces[positions[i]] = pieceOrder[i];
+                shapeColors[positions[i]] = colors[i];
+            }
+
+            startBoard = new Board(boardSpaces, states);
+            startState = new DecisionTreeNode(startBoard, playerPiece);
+
+            unwinnableByPlayer = startState.GetUltimateWinner() != playerPiece;
+            unwinnableByOpponent = !startState.GetImmediateChildren().Any(x => x.GetUltimateWinner() == oppPiece);
+            canSolveInOneMove = startState.Move(startState.BestMove).Winner == playerPiece;
+        } while (unwinnableByPlayer || unwinnableByOpponent || canSolveInOneMove);
+
+        currentState = startState;
+        for (int i = 0; i < positions.Length; i++)
+            tiles[positions[i]].SetTile(pieceOrder[i], colors[i]);
         LogStart();
+
     }
+    // Outputs starting board state to logging in a way that is palatable to custom LFA support.
     void LogStart()
     {
         string colors = "";
@@ -135,44 +157,52 @@ public class ToeTacticsScript : MonoBehaviour {
     {
         Audio.PlaySoundAtTransform("place piece", tiles[position].transform);
         tiles[position].SetTile(piece, ShapeColor.Gray);
-        board[position] = piece;
+        currentState = currentState.Move(position);
         CheckCurrentBoard();
     }
     void CheckCurrentBoard()
     {
-        TileValue victor = board.GetVictor();
         moduleInteractable = false;
-        if (victor == playerPiece)
+        if (currentState.Winner == playerPiece)
             Solve();
-        else if (victor == Board.NextPiece(playerPiece))
+        else if (currentState.Winner == oppPiece)
             StrikeWithOppWin();
-        else if (board.IsFull())
+        else if (FullBoard())
             StrikeWithTie();
         else moduleInteractable = true;
+    }
+    bool FullBoard()
+    {
+        for (int i = 0; i < 9; i++)
+            if (tiles[i].Shape == TileValue.None)
+                return false;
+        return true;
     }
     IEnumerator PlaceOpponentPiece()
     {
         moduleInteractable = false;
         yield return new WaitForSeconds(1.25f);
-        TileValue opponentPiece = Board.NextPiece(playerPiece);
-        board.GenerateTree(opponentPiece);
-        int position = board.GetBestMove();
-        if (position == -1)
-        {
+        int pos = currentState.BestMove;
+        if (pos == -1)
             yield break;
-        }
-        PlaceTile(position, opponentPiece);
-        Log("Your opponent placed an {0} in the {1} position.", opponentPiece, tileNames[position]);
-        SuggestBestMove();
         moduleInteractable = true;
+        PlaceTile(pos, oppPiece);
+        Log("Your opponent placed an {0} in the {1} position.", oppPiece, tileNames[pos]);
+        SuggestBestMove();
     }
     void SuggestBestMove()
     {
-        board.GenerateTree(playerPiece);
-        int bestMove = board.GetBestMove();
-        if (bestMove == -1)
+        if (currentState.BestMove == -1)
             return;
-        Log("You should place an {0} in the {1} position.", playerPiece, tileNames[bestMove]);
+        if (!unwinnable)
+        {
+            if (currentState.GetUltimateWinner() != playerPiece)
+            {
+                unwinnable = true;
+                Log("Uh oh. The board has been put into an unwinnable position.");
+            }            
+            else Log("You should place an {0} in the {1} position.", playerPiece, tileNames[currentState.BestMove]);
+        }
     }
     void Solve()
     {
@@ -195,25 +225,19 @@ public class ToeTacticsScript : MonoBehaviour {
     {
         moduleInteractable = false;
         yield return new WaitForSeconds(1.5f);
-        if (canStrike)
-            Module.HandleStrike();
+        Module.HandleStrike();
         for (int i = 0; i < 9; i++)
-            tiles[i].SetTile(startingBoard[i], shapeColors[i]);
-        board = startingBoard.Clone() as Board;
-
-
-        board.GenerateTree(playerPiece);
+            tiles[i].SetTile(boardSpaces[i], shapeColors[i]);
+        currentState = startState;
+        unwinnable = false;
         moduleInteractable = true;
         yield return null;
         SuggestBestMove();
-        canStrike = false;
-        yield return new WaitForSeconds(.5f);
-        canStrike = true;
     }
-    SolveState IndexTable(Tile tile)
+    SolveState IndexTable(int position, TileValue shape, ShapeColor color)
     {
-        return solveStateTable[tile.position,
-                    3 * ((int)tile.Shape - 1) + ((int)tile.Color - 1)];
+        int column = 3 * ((int)shape - 1) + ((int)color - 1);
+        return solveStateTable[position, column];
     }
     void Log(string str, params object[] args)
     {
@@ -244,14 +268,18 @@ public class ToeTacticsScript : MonoBehaviour {
 
     IEnumerator TwitchHandleForcedSolve ()
     {
-        while (!moduleSolved)
+        if (unwinnable)
+            Module.HandlePass();
+        else
         {
-            while (!moduleInteractable)
-                yield return true;
-            board.GenerateTree(playerPiece);
-            int btnIx = board.GetBestMove();
-            tiles[btnIx].selectable.OnInteract();
-            yield return null;
+            while (!moduleSolved)
+            {
+                while (!moduleInteractable)
+                    yield return true;
+                yield return new WaitForSeconds(0.1f);
+                tiles[currentState.BestMove].selectable.OnInteract();
+                yield return null;
+            }
         }
     }
 }
